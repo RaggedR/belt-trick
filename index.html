@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Belt Trick — Spinors need 720°</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a1a; overflow: hidden; font-family: system-ui, sans-serif; }
+canvas { display: block; }
+
+#ui {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  background: rgba(20, 20, 40, 0.85);
+  backdrop-filter: blur(8px);
+  padding: 12px 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+button {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+button:hover { background: rgba(255,255,255,0.2); }
+button.active { background: rgba(100,180,255,0.3); border-color: rgba(100,180,255,0.5); }
+
+#info {
+  position: fixed;
+  top: 24px;
+  left: 24px;
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.6;
+}
+#info h1 { font-size: 22px; color: #6af; margin-bottom: 4px; }
+#info .angle { color: #aaa; font-family: monospace; }
+#info .phase { color: #fd6; margin-top: 8px; font-size: 13px; }
+
+#legend {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  color: rgba(255,255,255,0.6);
+  font-size: 12px;
+  text-align: right;
+  line-height: 1.8;
+}
+</style>
+</head>
+<body>
+
+<div id="info">
+  <h1>The Belt Trick</h1>
+  <div class="angle" id="angle-display">&theta; = 0°</div>
+  <div class="phase" id="phase-display"></div>
+</div>
+
+<div id="legend">
+  Drag to orbit<br>
+  Scroll to zoom<br>
+  <br>
+  &pi;<sub>1</sub>(SO(3)) = Z/2Z
+</div>
+
+<div id="ui">
+  <button id="btn-360">Rotate 360°</button>
+  <button id="btn-720">Rotate 720°</button>
+  <button id="btn-untwist">Untwist</button>
+  <button id="btn-reset">Reset</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ─── Config ───────────────────────────────────────
+const R_IN = 0.7;
+const R_OUT = 2.8;
+const N_PTS = 120;       // points per belt curve
+const TUBE_RADIUS = 0.04;
+const TUBE_SEGMENTS = 8;
+
+// ─── Scene setup ──────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a1a);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(5.5, 4, 5.5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.5;
+
+// ─── Lighting ─────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+const key = new THREE.DirectionalLight(0xffffff, 0.8);
+key.position.set(3, 5, 4);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x6688ff, 0.3);
+fill.position.set(-3, -2, -2);
+scene.add(fill);
+
+// ─── Inner sphere ─────────────────────────────────
+const innerGeo = new THREE.SphereGeometry(R_IN, 32, 24);
+const innerMat = new THREE.MeshStandardMaterial({
+  color: 0x2244aa,
+  roughness: 0.3,
+  metalness: 0.2,
+});
+const innerSphere = new THREE.Mesh(innerGeo, innerMat);
+scene.add(innerSphere);
+
+// Marker dot on sphere
+const markerGeo = new THREE.SphereGeometry(0.06, 12, 8);
+const markerMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const marker = new THREE.Mesh(markerGeo, markerMat);
+marker.position.set(0, R_IN * 0.95, 0);
+innerSphere.add(marker);
+
+// ─── Outer cage ───────────────────────────────────
+function makeRing(axis) {
+  const pts = [];
+  for (let i = 0; i <= 64; i++) {
+    const a = (i / 64) * Math.PI * 2;
+    const v = new THREE.Vector3(Math.cos(a) * R_OUT, Math.sin(a) * R_OUT, 0);
+    if (axis === 'xz') v.applyAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+    if (axis === 'yz') v.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    pts.push(v);
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  return new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x444466, transparent: true, opacity: 0.3 }));
+}
+scene.add(makeRing('xy'), makeRing('xz'), makeRing('yz'));
+
+// ─── Belt specs ───────────────────────────────────
+const beltSpecs = [];
+
+// Two equatorial belts at 180° spacing
+const armColors = [0xff4444, 0x4488ff];
+for (let i = 0; i < 2; i++) {
+  beltSpecs.push({ lat: 0, phi0: i * Math.PI, color: armColors[i] });
+}
+
+// ─── Belt geometry ────────────────────────────────
+// The belt is the straight radial belt with each point rotated by a
+// rotation q(t, s) ∈ SO(3).
+//
+//   Twisted state (s = 0):  q(t) = rotation about Y by θ(1−t)
+//     — for θ = 4π this is a CLOSED LOOP in SO(3), based at the identity
+//       (both belt ends pinned), and it is null-homotopic.
+//
+//   Untwist (s: 0 → 1): the genuine contraction of that loop, done in
+//   the double cover SU(2) = S³. The lifted loop is a great circle
+//   through the identity quaternion. Circles through a fixed point of a
+//   sphere can be shrunk to that point smoothly: tilt the cutting plane
+//   (angle σ = πs/2) so the circle's radius cos σ → 0.
+//
+//   Because every belt point is a pure ROTATION of the straight belt,
+//   |p| = r(t) is preserved: the belt can never enter the ball, and
+//   points at different t have different radii, so it can never
+//   self-intersect. Both endpoints are pinned exactly for all s.
+function beltPoint(lat, phi0, t, theta, s) {
+  const cl = Math.cos(lat), sl = Math.sin(lat);
+  const r = R_IN + t * (R_OUT - R_IN);
+
+  if (s < 1e-6) {
+    // Rotation phase: twist distributed linearly along the belt
+    const phi = phi0 + theta * (1 - t);
+    return new THREE.Vector3(r * cl * Math.cos(phi), r * sl, r * cl * Math.sin(phi));
+  }
+
+  const psi = 0.5 * theta * (1 - t);       // half-angle (SU(2) covers 2:1)
+  const cp = Math.cos(psi), sp = Math.sin(psi);
+
+  // ── Odd twist (360°, 3×360°, …): STUCK ──
+  // The lift runs from −1 to +1 in SU(2) — a path between DIFFERENT
+  // endpoints. No cutting-plane tilt can shrink it. The best we can do
+  // rel endpoints is swing the twist AXIS around: n(s) tilts from −Y
+  // through horizontal. The belt writhes but every configuration is a
+  // full 2π twist about some axis — the twist never dies.
+  if (Math.round(theta / (2 * Math.PI)) % 2 !== 0) {
+    const a = Math.PI * s;
+    const ny = -Math.cos(a), nz = Math.sin(a);
+    const q = new THREE.Quaternion(0, sp * ny, sp * nz, cp);
+    const p = new THREE.Vector3(r * cl * Math.cos(phi0), r * sl, r * cl * Math.sin(phi0));
+    return p.applyQuaternion(q);
+  }
+
+  // ── Even twist (720°, …): SU(2) contraction ──
+  // Quaternion circle: q(t) = m + cosσ·(cosψ e₁ + sinψ e₂), living in the
+  // 2-sphere spanned by {1, tilt-axis, twist-axis}. ψ = θ(1−t)/2 runs
+  // full turns (θ = 4π), so q(0) = q(1) = identity for EVERY σ.
+  const sigma = 0.5 * Math.PI * s;
+  const cs = Math.cos(sigma), ss = Math.sin(sigma);
+
+  const w = ss * ss + cs * cs * cp;        // real part
+  const twist = -cs * sp;                  // about −Y = increasing-phi twist
+  const tilt = ss * cs * (1 - cp);         // tilts toward horizontal axis ⊥ belt
+
+  // GLOBAL horizontal tilt axis (+Z). Using one shared axis means q(t,s)
+  // is the same rotation field for every arm — so arms at phi0 and
+  // phi0+π stay exactly antipodal for all time and can never collide,
+  // not even at the pole.
+  const q = new THREE.Quaternion(0, twist, tilt, w);
+  const p = new THREE.Vector3(r * cl * Math.cos(phi0), r * sl, r * cl * Math.sin(phi0));
+  return p.applyQuaternion(q);
+}
+
+function generateBeltCurve(lat, phi0, theta, s) {
+  const points = [];
+  for (let i = 0; i <= N_PTS; i++) {
+    const t = i / N_PTS;
+    points.push(beltPoint(lat, phi0, t, theta, s));
+  }
+  return new THREE.CatmullRomCurve3(points);
+}
+
+// Create belt meshes
+const belts = [];
+for (const spec of beltSpecs) {
+  const curve = generateBeltCurve(spec.lat, spec.phi0, 0, 0);
+  const geo = new THREE.TubeGeometry(curve, N_PTS, TUBE_RADIUS, TUBE_SEGMENTS, false);
+  const mat = new THREE.MeshStandardMaterial({
+    color: spec.color,
+    roughness: 0.4,
+    metalness: 0.1,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  scene.add(mesh);
+  belts.push({ mesh, spec, mat });
+
+  // Anchor dot on outer cage
+  const anchorPos = beltPoint(spec.lat, spec.phi0, 1, 0, 0);
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.05, 8, 6),
+    new THREE.MeshBasicMaterial({ color: spec.color })
+  );
+  dot.position.copy(anchorPos);
+  scene.add(dot);
+}
+
+// ─── Animation state ──────────────────────────────
+let theta = 0;
+let untwistParam = 0;
+let animating = false;
+let animTarget = null; // { prop, from, to, duration, elapsed, onDone }
+
+function startAnim(prop, to, duration, onDone) {
+  const from = prop === 'theta' ? theta : untwistParam;
+  animTarget = { prop, from, to, duration, elapsed: 0, onDone };
+  animating = true;
+}
+
+function updateBelts() {
+  for (const belt of belts) {
+    const curve = generateBeltCurve(belt.spec.lat, belt.spec.phi0, theta, untwistParam);
+    const newGeo = new THREE.TubeGeometry(curve, N_PTS, TUBE_RADIUS, TUBE_SEGMENTS, false);
+    belt.mesh.geometry.dispose();
+    belt.mesh.geometry = newGeo;
+  }
+  // Rotate inner sphere
+  innerSphere.rotation.y = theta;
+}
+
+// ─── UI ───────────────────────────────────────────
+const angleDisplay = document.getElementById('angle-display');
+const phaseDisplay = document.getElementById('phase-display');
+
+document.getElementById('btn-360').onclick = () => {
+  if (animating) return;
+  untwistParam = 0;
+  startAnim('theta', theta + Math.PI * 2, 3000, () => {
+    phaseDisplay.textContent = '\u03c8 \u2192 -\u03c8 (twisted!)';
+    phaseDisplay.style.color = '#f66';
+  });
+};
+
+document.getElementById('btn-720').onclick = () => {
+  if (animating) return;
+  untwistParam = 0;
+  startAnim('theta', theta + Math.PI * 4, 6000, () => {
+    phaseDisplay.textContent = '\u03c8 \u2192 +\u03c8 (can untwist)';
+    phaseDisplay.style.color = '#6f6';
+  });
+};
+
+document.getElementById('btn-untwist').onclick = () => {
+  if (animating) return;
+  const twists = Math.round(theta / (2 * Math.PI));
+  if (twists === 0) return;
+
+  if (twists % 2 !== 0) {
+    // Odd twist — try, strain, and get stuck. Swing the twist axis
+    // halfway over the pole, then fall back: the twist survives.
+    phaseDisplay.textContent = 'Trying to untwist\u2026';
+    phaseDisplay.style.color = '#fa4';
+    startAnim('untwist', 0.5, 5000, () => {
+      startAnim('untwist', 0, 4000, () => {
+        phaseDisplay.textContent = 'Stuck \u2014 360\u00b0 cannot be undone!';
+        phaseDisplay.style.color = '#f66';
+      });
+    });
+    return;
+  }
+
+  startAnim('untwist', 1, 12000, () => {
+    phaseDisplay.textContent = 'Straight again!';
+    phaseDisplay.style.color = '#6af';
+    setTimeout(() => {
+      theta = 0;
+      untwistParam = 0;
+      phaseDisplay.textContent = '';
+      updateBelts();
+    }, 1500);
+  });
+};
+
+document.getElementById('btn-reset').onclick = () => {
+  if (animating) return;
+  theta = 0;
+  untwistParam = 0;
+  phaseDisplay.textContent = '';
+  updateBelts();
+};
+
+// ─── Render loop ──────────────────────────────────
+let lastTime = performance.now();
+
+function animate(now) {
+  requestAnimationFrame(animate);
+  const dt = now - lastTime;
+  lastTime = now;
+
+  if (animating && animTarget) {
+    animTarget.elapsed += dt;
+    const progress = Math.min(animTarget.elapsed / animTarget.duration, 1);
+    // Untwist uses heavy ease-out (very slow at end to linger on the ring);
+    // rotations use standard ease-in-out cubic
+    let eased;
+    // Ease-in-out cubic for everything — the SU(2) contraction is a
+    // single smooth swing, so no special-cased untwist easing needed
+    eased = progress < 0.5
+      ? 4 * progress * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+    const value = animTarget.from + (animTarget.to - animTarget.from) * eased;
+
+    if (animTarget.prop === 'theta') {
+      theta = value;
+    } else {
+      untwistParam = value;
+    }
+
+    updateBelts();
+
+    if (progress >= 1) {
+      animating = false;
+      const done = animTarget.onDone;
+      animTarget = null;   // clear BEFORE onDone so it can chain a new anim
+      if (done) done();
+    }
+  }
+
+  // Update HUD
+  const deg = Math.round((theta % (Math.PI * 4 + 0.01)) * 180 / Math.PI);
+  angleDisplay.textContent = `\u03b8 = ${deg}\u00b0`;
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+animate(performance.now());
+updateBelts();
+
+// ─── Resize ───────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
